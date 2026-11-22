@@ -14,6 +14,23 @@ const MODULE_ID = "vr-first-person";
 const LOG = (...a) => console.log(`${MODULE_ID} |`, ...a);
 const WARN = (...a) => console.warn(`${MODULE_ID} |`, ...a);
 
+/*
+ * Ask for XR-compatible WebGL contexts from the start. 3D Canvas creates its renderer without
+ * xrCompatible, so entering VR made three.js call gl.makeXRCompatible() on the live context.
+ * On some PCs (notably ones with two GPUs) that loses and rebuilds the whole context, which
+ * 3D Canvas can't recover from. This runs when the module loads, before Foundry or 3D Canvas
+ * create their contexts. Takes effect after a page reload.
+ */
+if (navigator.xr && !HTMLCanvasElement.prototype.getContext.__vrfp) {
+  const origGetContext = HTMLCanvasElement.prototype.getContext;
+  const patched = function (type, attrs) {
+    if (type === "webgl2" || type === "webgl") attrs = { ...attrs, xrCompatible: true };
+    return origGetContext.call(this, type, attrs);
+  };
+  patched.__vrfp = true;
+  HTMLCanvasElement.prototype.getContext = patched;
+}
+
 /* -------------------------------------------- */
 /*  Settings                                     */
 /* -------------------------------------------- */
@@ -257,7 +274,15 @@ async function setupVR(session, engine, token) {
   };
 
   watchAnimationLoop(renderer);
-  STEP("hooked 3D Canvas render loop", { hostLoopCaptured: !!state.hostLoop });
+  // Our watcher is usually installed after 3D Canvas already called setAnimationLoop, so it never
+  // saw the loop. Without it, 3D Canvas's per-frame updates stopped in VR and its desktop view
+  // stayed frozen after leaving VR. In shared-context mode 3D Canvas runs from Foundry's PIXI
+  // ticker instead, which keeps going on its own, so there is nothing to call or restore.
+  state.shared = !!engine.g._sharedContext;
+  if (!state.hostLoop && !state.shared && typeof engine.g.animation === "function") {
+    state.hostLoop = engine.g.animation.bind(engine.g);
+  }
+  STEP("hooked 3D Canvas render loop", { hostLoop: !!state.hostLoop, sharedContext: state.shared });
   session.addEventListener("end", exitVR);
   state.onContextLost = () => {
     WARN("WebGL context lost while entering/using VR");
@@ -269,6 +294,9 @@ async function setupVR(session, engine, token) {
   renderer.xr.enabled = true;
   renderer.xr.setReferenceSpaceType("local-floor");
   renderer.xr.setFramebufferScaleFactor?.(setting("resolutionScale"));
+  STEP("context xrCompatible", !!renderer.getContext().getContextAttributes?.()?.xrCompatible);
+  await warmUpShaders(engine, vrCam);
+  if (state.session !== session) return;   // session ended (B pressed, headset removed) while we waited
   try {
     STEP("handing the 3D renderer to the headset (setSession)");
     await renderer.xr.setSession(session);
@@ -284,6 +312,37 @@ async function setupVR(session, engine, token) {
   state.starting = false;
   updateButton();
   STEP("entered VR on token", token.name);
+}
+
+/**
+ * The main cause of the "Page not responding" freeze.
+ *
+ * 3D Canvas draws through a post-processing chain (EffectComposer), so every shader in the scene
+ * was built for drawing into an offscreen buffer. VR draws the scene straight to the headset, which
+ * needs a different build of every shader (different output colour space and tone mapping). three.js
+ * built them all synchronously on the first VR frame, which in a full scene takes long enough
+ * for Edge to call the page frozen.
+ *
+ * compileAsync builds them ahead of time in the background (KHR_parallel_shader_compile) without
+ * blocking the page. Drawing with no render target set uses the same shader build as drawing to the
+ * headset, because three.js gives the XR target the renderer's own colour space and tone mapping.
+ */
+async function warmUpShaders({ renderer, scene }, cam) {
+  if (typeof renderer.compileAsync !== "function") {
+    return STEP("shader warm-up skipped (this three.js has no compileAsync)");
+  }
+  STEP("building VR shaders in the background");
+  ui.notifications.info("VR: Preparing the 3D scene for the headset…");
+  const prevTarget = renderer.getRenderTarget();
+  let job;
+  renderer.setRenderTarget(null);
+  try { job = renderer.compileAsync(scene, cam); }   // shader builds are queued synchronously here
+  finally { renderer.setRenderTarget(prevTarget); }
+  const timedOut = await Promise.race([
+    job.then(() => false),
+    new Promise(r => setTimeout(() => r(true), 60000))
+  ]);
+  STEP(timedOut ? "VR shaders still building after 60s, continuing anyway" : "VR shaders ready");
 }
 
 function exitVR() {
@@ -317,7 +376,8 @@ function watchdog(ms, parts) {
     state.slowFrames++;
     WARN(`slow XR frame: ${ms.toFixed(0)}ms`, parts);
   } else state.slowFrames = 0;
-  if (ms > 2000 || state.slowFrames >= 5) {
+  // The first few frames can be slow for a moment while the headset sets up; don't bail on those.
+  if ((ms > 2000 && state.frameCount > 3) || state.slowFrames >= 5) {
     ui.notifications.error(`VR: Rendering is too slow for VR (${ms.toFixed(0)}ms per frame), so VR was stopped. Try a lower "VR resolution scale" or lower 3D Canvas quality.`);
     state.session?.end().catch(() => {});
     return true;
@@ -381,7 +441,13 @@ function renderXRFrame(time, frame) {
   if (mesh) mesh.visible = false;
   t = performance.now();
   state.allowRender = true;
-  try { state.origRender.call(renderer, scene, vrCam); }
+  try {
+    // In shared-context mode Foundry's PIXI also draws with this GL context, so three's cached GL
+    // state is stale. 3D Canvas's composer can also leave one of its buffers bound; null = headset.
+    if (state.shared) renderer.resetState();
+    renderer.setRenderTarget(null);
+    state.origRender.call(renderer, scene, vrCam);
+  }
   finally {
     state.allowRender = false;
     if (mesh) mesh.visible = wasVisible;
@@ -523,7 +589,11 @@ function diagnose() {
     "headset detected": headsetAvailable,
     "3D view visible": engine ? is3DVisible(engine.renderer) : false,
     "secure context (HTTPS)": window.isSecureContext,
-    "hooked into setAnimationLoop": !!state.hostLoop
+    "hooked into setAnimationLoop": !!state.hostLoop,
+    "3D Canvas loop found": typeof g?.animation === "function",
+    "3D Canvas shared context": !!g?._sharedContext,
+    "WebGL context xrCompatible": engine ? !!engine.renderer.getContext().getContextAttributes?.()?.xrCompatible : null,
+    "shader warm-up available": engine ? typeof engine.renderer.compileAsync === "function" : null
   };
   console.table(report);
   return report;

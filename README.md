@@ -47,13 +47,21 @@ back to Claude and the lookups in `scripts/main.js` (the "3D Canvas access" sect
 
 ## If the page freezes ("Page not responding")
 
-Since v0.1.1 the module logs every step of starting VR, with timings, and stops VR by itself if frames get too slow.
+v0.1.2 fixes the most likely cause: the first VR frame rebuilt every shader in the scene at once
+(3D Canvas's shaders were built for its post-processing, not for drawing straight to a headset). The module
+now builds them in the background after you click **Enter VR**, so expect a short
+"Preparing the 3D scene for the headset…" pause. It also asks for a VR-ready graphics context when the page
+loads, so **reload the page once after updating** (F5).
+
+If it still freezes, the module logs every step of starting VR, with timings, and stops VR by itself if frames get too slow.
 
 1. Load the 3D scene, select your token, press **F12** and open the **Console** tab.
 2. Type `vr-first-person` into the console's filter box.
 3. Click **Enter VR** and wait.
 4. The last line that appears shows which step it stopped at:
    - `requesting VR session` with nothing after it: Edge or Virtual Desktop never answered. Make sure VD is connected *and* streaming before you load the page.
+   - `context xrCompatible false`: the page wasn't reloaded after updating, or another module created the 3D view's graphics context before this one loaded.
+   - `building VR shaders in the background` with nothing after it for a long time: the scene is very heavy; it gives up waiting after 60 seconds and carries on.
    - `handing the 3D renderer to the headset (setSession)` with nothing after it: Edge got stuck moving the 3D view to the headset.
    - `XR frame 1 took ...ms` with a big number: each frame is too heavy. Lower **VR resolution scale** or 3D Canvas quality.
 
@@ -61,7 +69,7 @@ Since v0.1.1 the module logs every step of starting VR, with timings, and stops 
 
 - **"No headset found"**: Virtual Desktop must be streaming in VR (SteamVR/VDXR running) *before* you load the Foundry page. Reload the page after starting it.
 - **Headset shows black or frozen**: send the result of `diagnose()` and any red console errors.
-- **Desktop 3D view freezes after leaving VR**: reload the page (F5). This means 3D Canvas uses a render loop the module didn't detect; worth reporting.
+- **Desktop 3D view freezes after leaving VR**: reload the page (F5) and report it with the `diagnose()` output. Since v0.1.2 the module hands 3D Canvas its render loop back when you leave VR, so this shouldn't happen.
 - **Moving forward goes sideways/backwards**: switch *Joystick movement direction* to *Relative to the map*, and report it. The head-relative mode assumes 3D Canvas maps the 2D map's x/y onto the 3D x/z axes.
 - **World is huge or tiny**: adjust *World scale multiplier*.
 - **Laggy or stuttering**: lower 3D Canvas quality settings (shadows, resolution scale) and Virtual Desktop's bitrate/quality preset. VR draws the scene twice at 72–120 fps.

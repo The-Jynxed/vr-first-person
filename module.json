@@ -2,7 +2,7 @@
   "id": "vr-first-person",
   "title": "VR First Person (for 3D Canvas)",
   "description": "View 3D Canvas scenes in first person from your token's eyes in a VR headset (WebXR). Left stick moves your token one square at a time, like the arrow keys.",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "authors": [{ "name": "jynxedlove" }],
   "compatibility": {
     "minimum": "12",
