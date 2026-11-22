@@ -1,0 +1,18 @@
+#vrfp-enter {
+  position: fixed;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 100;
+  padding: 6px 14px;
+  border-radius: 6px;
+  border: 1px solid #ff6400;
+  background: rgba(20, 20, 20, 0.85);
+  color: #f0f0e0;
+  font-size: 14px;
+  cursor: pointer;
+  width: auto;
+  line-height: normal;
+}
+#vrfp-enter:hover { background: rgba(60, 30, 10, 0.95); }
+#vrfp-enter.vrfp-active { border-color: #4caf50; }
