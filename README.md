@@ -5,6 +5,17 @@ Built and tested-for: Meta Quest 3 → Virtual Desktop → Microsoft Edge → HT
 
 ## Install
 
+**From Foundry (easiest):** in Foundry's setup screen go to **Add-on Modules → Install Module**, paste this into
+**Manifest URL** and click Install:
+
+```
+https://github.com/The-Jynxed/vr-first-person/releases/latest/download/module.json
+```
+
+Then enable it in your world (step 3 below). Updates show up in Foundry's normal "Update" button.
+
+**By hand:**
+
 1. Copy the whole `vr-first-person` folder into your Foundry server's `Data/modules/` folder.
 2. Restart Foundry (or return to setup and relaunch the world).
 3. In the world: **Game Settings → Manage Modules → enable "VR First Person (for 3D Canvas)"**. 3D Canvas must be enabled too.
